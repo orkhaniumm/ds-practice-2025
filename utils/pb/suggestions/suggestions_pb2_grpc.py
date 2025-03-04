@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import suggestion_system_pb2 as suggestion__system__pb2
+import suggestions_pb2 as suggestions__pb2
 
 GRPC_GENERATED_VERSION = '1.70.0'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in suggestion_system_pb2_grpc.py depends on'
+        + f' but the generated code in suggestions_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -26,8 +26,7 @@ if _version_not_supported:
 
 
 class SuggestionServiceStub(object):
-    """Service definition for the suggestion system.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -37,14 +36,13 @@ class SuggestionServiceStub(object):
         """
         self.GetSuggestions = channel.unary_unary(
                 '/suggestions.SuggestionService/GetSuggestions',
-                request_serializer=suggestion__system__pb2.SuggestionRequest.SerializeToString,
-                response_deserializer=suggestion__system__pb2.SuggestionResponse.FromString,
+                request_serializer=suggestions__pb2.SuggestionRequest.SerializeToString,
+                response_deserializer=suggestions__pb2.SuggestionResponse.FromString,
                 _registered_method=True)
 
 
 class SuggestionServiceServicer(object):
-    """Service definition for the suggestion system.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def GetSuggestions(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -57,8 +55,8 @@ def add_SuggestionServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'GetSuggestions': grpc.unary_unary_rpc_method_handler(
                     servicer.GetSuggestions,
-                    request_deserializer=suggestion__system__pb2.SuggestionRequest.FromString,
-                    response_serializer=suggestion__system__pb2.SuggestionResponse.SerializeToString,
+                    request_deserializer=suggestions__pb2.SuggestionRequest.FromString,
+                    response_serializer=suggestions__pb2.SuggestionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -69,8 +67,7 @@ def add_SuggestionServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class SuggestionService(object):
-    """Service definition for the suggestion system.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def GetSuggestions(request,
@@ -87,8 +84,8 @@ class SuggestionService(object):
             request,
             target,
             '/suggestions.SuggestionService/GetSuggestions',
-            suggestion__system__pb2.SuggestionRequest.SerializeToString,
-            suggestion__system__pb2.SuggestionResponse.FromString,
+            suggestions__pb2.SuggestionRequest.SerializeToString,
+            suggestions__pb2.SuggestionResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -35,6 +35,8 @@ services:
       - ./utils:/app/utils
       # Mount the orchestrator/src directory in the current directory to the /app/orchestrator/src directory in the container
       - ./orchestrator/src:/app/orchestrator/src
+      - ./utils/pb/suggestions:/app/suggestions
+
   fraud_detection:
     build:
       # Use the current directory as the build context
@@ -69,3 +71,16 @@ services:
     volumes:
       - ./utils:/app/utils
       - ./transaction_verification/src:/app/transaction_verification/src
+  suggestions:
+    build:
+      context: ./
+      dockerfile: ./suggestions/Dockerfile
+    ports:
+      - "50053:50053"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/suggestions/src/app.py
+    volumes:
+      - ./utils:/app/utils
+      - ./suggestions/src:/app/suggestions/src
+
