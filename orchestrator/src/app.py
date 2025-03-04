@@ -22,16 +22,15 @@ sys.path.insert(0, fraud_detection_path)
 sys.path.insert(0, tx_verification_path)
 sys.path.insert(0, suggestions_path)
 
-# Import gRPC modules for Fraud Detection and Transaction Verification
+# Import gRPC modules for Fraud Detection, Transaction Verification, and Suggestions
 import fraud_detection_pb2 as fraud_detection_pb2
 import fraud_detection_pb2_grpc as fraud_detection_grpc
 
 import transaction_verification_pb2 as tx_verification_pb2
 import transaction_verification_pb2_grpc as transaction_verification_grpc
 
-# Suggestions service to be implemented later
-# import suggestions_pb2 as suggestions
-# import suggestions_pb2_grpc as suggestions_grpc
+import suggestions_pb2 as suggestions
+import suggestions_pb2_grpc as suggestions_grpc
 
 # gRPC service addresses
 FRAUD_DETECTION_ADDR = 'fraud_detection:50051'
@@ -78,13 +77,35 @@ def perform_transaction_verification(checkout_data, order_id):
                 orderId=str(order_id)
             )
             response = stub.Verify(request_msg)
-            is_valid = response.isValid  # Awaiting a boolean.
+            is_valid = response.isValid  # Boolean.
             logger.info(f"[TransactionVerification] Order {order_id} verification: {is_valid}")
             return is_valid
     except Exception as e:
         logger.error(f"[TransactionVerification] Error for order {order_id}: {e}")
         return False  # Treat as invalid in case of error.
-    
+
+def perform_suggestions(checkout_data, order_id):
+    logger.info(f"[Suggestions] Processing order {order_id} for suggestions")
+    try:
+        items = checkout_data.get("items", [])
+        book_title = items[0].get("name", "Default Book") if items else "Default Book"
+        with grpc.insecure_channel(SUGGESTIONS_ADDR) as channel:
+            stub = suggestions_grpc.SuggestionServiceStub(channel)
+            request_msg = suggestions.SuggestionRequest(book_title=book_title)
+            response = stub.GetSuggestions(request_msg)
+            suggestions_list = []
+            for s in response.suggestions:  # Title and Author good enough
+                suggestions_list.append({
+                    "title": s.title,
+                    "author": s.author
+                })
+            logger.info(f"[Suggestions] Order {order_id} suggestions: {suggestions_list}")
+            return suggestions_list
+    except Exception as e:
+        logger.error(f"[Suggestions] Error for order {order_id}: {e}")
+        return []
+
+
 ### Flask App and Endpoints ###
 
 app = Flask(__name__)
@@ -107,17 +128,22 @@ def checkout():
     # Threads for gRPC calls
     fraud_thread = WorkerThread(target=perform_fraud_detection, args=(checkout_data, order_id))
     tx_thread = WorkerThread(target=perform_transaction_verification, args=(checkout_data, order_id))
+    suggestions_thread = WorkerThread(target=perform_suggestions, args=(checkout_data, order_id))
     
     # Threads #
     fraud_thread.start()
     tx_thread.start()
-
+    suggestions_thread.start()
+    
+    # Wait for all threads to complete.
     fraud_thread.join()
     tx_thread.join()
-
-    # Collect results
+    suggestions_thread.join()
+    
+    # Collect results.
     is_fraud = fraud_thread.result
-    tx_response = tx_thread.result  # This is a boolean.
+    tx_response = tx_thread.result  # Boolean.
+    suggested_books = suggestions_thread.result  # List of suggestions.
 
     # Make final decision based on results
     if is_fraud or not tx_response:
@@ -126,14 +152,14 @@ def checkout():
             "orderId": order_id,
             "status": status,
             "message": "Fraud detected or transaction invalid.",
-            "suggestedBooks": []  # Not used rn, but must be present
+            "suggestedBooks": []  # No suggestions when rejected.
         }
     else:
         status = "Order Approved"
         response_payload = {
             "orderId": order_id,
             "status": status,
-            "suggestedBooks": []
+            "suggestedBooks": suggested_books
         }
 
     logger.info(f"[Orchestrator] Final decision for order {order_id}: {status}")
