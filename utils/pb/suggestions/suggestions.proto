@@ -2,8 +2,20 @@ syntax = "proto3";
 
 package suggestions;
 
+message SuggestionInitRequest {
+  string orderId = 1;
+  string checkoutData = 2;
+}
+
+message SuggestionInitResponse {
+  bool success = 1;
+  string clock = 2;
+}
+
 message SuggestionRequest {
-  string book_title = 1;
+  string orderId = 1;
+  string clock = 2;
+  string book_title = 3;
 }
 
 message BookSuggestion {
@@ -13,8 +25,10 @@ message BookSuggestion {
 
 message SuggestionResponse {
   repeated BookSuggestion suggestions = 1;
+  string clock = 2;
 }
 
 service SuggestionService {
-  rpc GetSuggestions (SuggestionRequest) returns (SuggestionResponse);
+  rpc InitOrder(SuggestionInitRequest) returns (SuggestionInitResponse);
+  rpc GenerateSuggestions(SuggestionRequest) returns (SuggestionResponse);
 }

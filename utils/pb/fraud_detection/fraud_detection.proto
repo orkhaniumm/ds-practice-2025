@@ -1,14 +1,30 @@
 syntax = "proto3";
+
 package fraud_detection;
 
-message FraudDetectionRequest {
-  string checkoutData = 1;
-  string orderId = 2;
+message FraudInitRequest {
+  string orderId = 1;
+  string checkoutData = 2;
 }
-message FraudDetectionResponse {
+
+message FraudInitResponse {
+  bool success = 1;
+  string clock = 2;
+}
+
+message FraudRequest {
+  string orderId = 1;
+  string clock = 2;
+}
+
+message FraudResponse {
   bool isFraud = 1;
   string message = 2;
+  string clock = 3;
 }
+
 service FraudDetectionService {
-  rpc CheckFraud(FraudDetectionRequest) returns (FraudDetectionResponse);
+  rpc InitOrder(FraudInitRequest) returns (FraudInitResponse);
+  rpc CheckUserDataFraud(FraudRequest) returns (FraudResponse);
+  rpc CheckCreditCardFraud(FraudRequest) returns (FraudResponse);
 }

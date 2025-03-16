@@ -24,19 +24,23 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11suggestions.proto\x12\x0bsuggestions\"\'\n\x11SuggestionRequest\x12\x12\n\nbook_title\x18\x01 \x01(\t\"/\n\x0e\x42ookSuggestion\x12\r\n\x05title\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\"F\n\x12SuggestionResponse\x12\x30\n\x0bsuggestions\x18\x01 \x03(\x0b\x32\x1b.suggestions.BookSuggestion2f\n\x11SuggestionService\x12Q\n\x0eGetSuggestions\x12\x1e.suggestions.SuggestionRequest\x1a\x1f.suggestions.SuggestionResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11suggestions.proto\x12\x0bsuggestions\">\n\x15SuggestionInitRequest\x12\x0f\n\x07orderId\x18\x01 \x01(\t\x12\x14\n\x0c\x63heckoutData\x18\x02 \x01(\t\"8\n\x16SuggestionInitResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x63lock\x18\x02 \x01(\t\"G\n\x11SuggestionRequest\x12\x0f\n\x07orderId\x18\x01 \x01(\t\x12\r\n\x05\x63lock\x18\x02 \x01(\t\x12\x12\n\nbook_title\x18\x03 \x01(\t\"/\n\x0e\x42ookSuggestion\x12\r\n\x05title\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\"U\n\x12SuggestionResponse\x12\x30\n\x0bsuggestions\x18\x01 \x03(\x0b\x32\x1b.suggestions.BookSuggestion\x12\r\n\x05\x63lock\x18\x02 \x01(\t2\xc1\x01\n\x11SuggestionService\x12T\n\tInitOrder\x12\".suggestions.SuggestionInitRequest\x1a#.suggestions.SuggestionInitResponse\x12V\n\x13GenerateSuggestions\x12\x1e.suggestions.SuggestionRequest\x1a\x1f.suggestions.SuggestionResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'suggestions_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_SUGGESTIONREQUEST']._serialized_start=34
-  _globals['_SUGGESTIONREQUEST']._serialized_end=73
-  _globals['_BOOKSUGGESTION']._serialized_start=75
-  _globals['_BOOKSUGGESTION']._serialized_end=122
-  _globals['_SUGGESTIONRESPONSE']._serialized_start=124
-  _globals['_SUGGESTIONRESPONSE']._serialized_end=194
-  _globals['_SUGGESTIONSERVICE']._serialized_start=196
-  _globals['_SUGGESTIONSERVICE']._serialized_end=298
+  _globals['_SUGGESTIONINITREQUEST']._serialized_start=34
+  _globals['_SUGGESTIONINITREQUEST']._serialized_end=96
+  _globals['_SUGGESTIONINITRESPONSE']._serialized_start=98
+  _globals['_SUGGESTIONINITRESPONSE']._serialized_end=154
+  _globals['_SUGGESTIONREQUEST']._serialized_start=156
+  _globals['_SUGGESTIONREQUEST']._serialized_end=227
+  _globals['_BOOKSUGGESTION']._serialized_start=229
+  _globals['_BOOKSUGGESTION']._serialized_end=276
+  _globals['_SUGGESTIONRESPONSE']._serialized_start=278
+  _globals['_SUGGESTIONRESPONSE']._serialized_end=363
+  _globals['_SUGGESTIONSERVICE']._serialized_start=366
+  _globals['_SUGGESTIONSERVICE']._serialized_end=559
 # @@protoc_insertion_point(module_scope)
