@@ -34,8 +34,13 @@ class SuggestionServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.GetSuggestions = channel.unary_unary(
-                '/suggestions.SuggestionService/GetSuggestions',
+        self.InitOrder = channel.unary_unary(
+                '/suggestions.SuggestionService/InitOrder',
+                request_serializer=suggestions__pb2.SuggestionInitRequest.SerializeToString,
+                response_deserializer=suggestions__pb2.SuggestionInitResponse.FromString,
+                _registered_method=True)
+        self.GenerateSuggestions = channel.unary_unary(
+                '/suggestions.SuggestionService/GenerateSuggestions',
                 request_serializer=suggestions__pb2.SuggestionRequest.SerializeToString,
                 response_deserializer=suggestions__pb2.SuggestionResponse.FromString,
                 _registered_method=True)
@@ -44,7 +49,13 @@ class SuggestionServiceStub(object):
 class SuggestionServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def GetSuggestions(self, request, context):
+    def InitOrder(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GenerateSuggestions(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -53,8 +64,13 @@ class SuggestionServiceServicer(object):
 
 def add_SuggestionServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'GetSuggestions': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetSuggestions,
+            'InitOrder': grpc.unary_unary_rpc_method_handler(
+                    servicer.InitOrder,
+                    request_deserializer=suggestions__pb2.SuggestionInitRequest.FromString,
+                    response_serializer=suggestions__pb2.SuggestionInitResponse.SerializeToString,
+            ),
+            'GenerateSuggestions': grpc.unary_unary_rpc_method_handler(
+                    servicer.GenerateSuggestions,
                     request_deserializer=suggestions__pb2.SuggestionRequest.FromString,
                     response_serializer=suggestions__pb2.SuggestionResponse.SerializeToString,
             ),
@@ -70,7 +86,7 @@ class SuggestionService(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def GetSuggestions(request,
+    def InitOrder(request,
             target,
             options=(),
             channel_credentials=None,
@@ -83,7 +99,34 @@ class SuggestionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/suggestions.SuggestionService/GetSuggestions',
+            '/suggestions.SuggestionService/InitOrder',
+            suggestions__pb2.SuggestionInitRequest.SerializeToString,
+            suggestions__pb2.SuggestionInitResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GenerateSuggestions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/suggestions.SuggestionService/GenerateSuggestions',
             suggestions__pb2.SuggestionRequest.SerializeToString,
             suggestions__pb2.SuggestionResponse.FromString,
             options,

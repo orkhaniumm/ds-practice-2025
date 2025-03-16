@@ -1,9 +1,10 @@
 import sys
 import os
 import grpc
+import json
+import logging
 import requests
 from concurrent import futures
-import logging
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -14,8 +15,8 @@ FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 fraud_detection_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/fraud_detection'))
 sys.path.insert(0, fraud_detection_grpc_path)
 
-import fraud_detection_pb2 as fraud_detection
-import fraud_detection_pb2_grpc as fraud_detection_grpc
+import fraud_detection_pb2 as fd_pb2
+import fraud_detection_pb2_grpc as fd_grpc
 
 # Define high-risk country codes.
 """
@@ -23,8 +24,7 @@ Current fraud detectioon logic is based on rejecting requests from a predefined
 list of high-risk countries that are known for fraudulent activities. Source 
 IP address is extracted and sent to ipinfo.io to get the country code. Later, 
 this code is compared against the list of high-risk countries to determine if
-the request should be rejected. In the forthcoming sections, more prominent solutions
-can be added as well.
+the request should be rejected.
 """
 HIGH_RISK_COUNTRIES = ['NG', 'RU', 'KP', 'CN', 'IR', 'VN', 'BY']
 
@@ -60,41 +60,75 @@ def get_country_from_ip(ip):
         logger.error(f"Error contacting ipinfo.io for IP {ip}: {e}")
     return None
 
+# Added for updating clock after fraud check
+def update_clock(clock, service_name):
+    clock[service_name] = clock.get(service_name, 0) + 1
+    return clock
+
 # Define new data structures corresponding to new proto definitions.
-class FraudDetectionService(fraud_detection_grpc.FraudDetectionServiceServicer):
-    def CheckFraud(self, request, context):
-        # Extract client IP from gRPC context.
-        peer = context.peer()
-        client_ip = extract_ip(peer)
-        country_code = None
-        if client_ip:
-            country_code = get_country_from_ip(client_ip)
-            if country_code:
-                country_code = country_code.upper()
-        
-        # Perform fraud detection and make decision
-        response = fraud_detection.FraudDetectionResponse()
-        if country_code and country_code in HIGH_RISK_COUNTRIES:
-            response.isFraud = True
-            response.message = f"Access Denied for country: {country_code}"
-            logger.info(f"[FraudDetection] Denied request from high-risk country: {country_code} (IP: {client_ip})")
-        else:
-            response.isFraud = False
-            response.message = "No fraud detected"
-            logger.info(f"[FraudDetection] Processed request (IP: {client_ip}, Country: {country_code or 'Unknown'})")
-        return response
+class FraudDetectionService(fd_grpc.FraudDetectionServiceServicer):
+    def __init__(self):
+        # Store order data in dictionary
+        self.orders = {}
+
+    def InitOrder(self, request, context):
+        # Initialize order by parsing checkout data and cache data
+        logger.info(f"[FraudDetection] InitOrder for {request.orderId}")
+        try:
+            data = json.loads(request.checkoutData)
+        except Exception as e:
+            logger.error(f"[FraudDetection] InitOrder parse error: {e}")
+            return fd_pb2.FraudInitResponse(success=False, clock="")
+         # Initialize the vector clock
+        init_clock = {"transaction": 0, "fraud": 0, "suggestions": 0}
+        self.orders[request.orderId] = {"data": data, "clock": init_clock}
+        return fd_pb2.FraudInitResponse(success=True, clock=json.dumps(init_clock))
+
+    def CheckUserDataFraud(self, request, context):
+        # Check user data for fraud
+        logger.info(f"[FraudDetection] CheckUserDataFraud for {request.orderId}")
+        entry = self.orders.get(request.orderId)
+        if not entry:
+            return fd_pb2.FraudResponse(isFraud=True, message="Order not found", clock=request.clock)
+        local_clock = entry["clock"]
+        try:
+            # Parse the incoming clock
+            incoming_clock = json.loads(request.clock) if request.clock else local_clock
+        except:
+            incoming_clock = local_clock
+        # Update the clock for the fraud event.
+        merged_clock = update_clock(local_clock, "fraud")
+        entry["clock"] = merged_clock
+        logger.info("[FraudDetection] User data fraud check passed.")
+        return fd_pb2.FraudResponse(isFraud=False, message="User data not fraudulent", clock=json.dumps(merged_clock))
+
+    def CheckCreditCardFraud(self, request, context):
+        # Still dummy logic
+        logger.info(f"[FraudDetection] CheckCreditCardFraud for {request.orderId}")
+        entry = self.orders.get(request.orderId)
+        if not entry:
+            return fd_pb2.FraudResponse(isFraud=True, message="Order not found", clock=request.clock)
+        local_clock = entry["clock"]
+        try:
+            incoming_clock = json.loads(request.clock) if request.clock else local_clock
+        except:
+            incoming_clock = local_clock
+        merged_clock = update_clock(local_clock, "fraud")
+        entry["clock"] = merged_clock
+        logger.info("[FraudDetection] Credit card fraud check passed.")
+        return fd_pb2.FraudResponse(isFraud=False, message="Credit card not fraudulent", clock=json.dumps(merged_clock))
 
 def serve():
     # Create a gRPC server
     server = grpc.server(futures.ThreadPoolExecutor())
     # Add Fraud Detection service to the server
-    fraud_detection_grpc.add_FraudDetectionServiceServicer_to_server(FraudDetectionService(), server)
+    fd_grpc.add_FraudDetectionServiceServicer_to_server(FraudDetectionService(), server)
     # Listen on port 50051
     port = "50051"
     server.add_insecure_port("[::]:" + port)
     # Start the server
     server.start()
-    print("Server started. Listening on port 50051.")
+    logger.info("Fraud Detection Server started. Listening on port 50051.")
     # Keep thread alive
     server.wait_for_termination()
 
