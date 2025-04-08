@@ -18,10 +18,13 @@ FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 fraud_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/fraud_detection'))
 tx_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/transaction_verification'))
 sugg_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/suggestions'))
+order_queue_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/order_queue'))
+
 # Add directories to system path
 sys.path.insert(0, fraud_path)
 sys.path.insert(0, tx_path)
 sys.path.insert(0, sugg_path)
+sys.path.insert(0, order_queue_path)
 
 # Import gRPC modules for Fraud Detection, Transaction Verification, and Suggestions
 import fraud_detection_pb2 as fd_pb2
@@ -33,6 +36,9 @@ import transaction_verification_pb2_grpc as tv_grpc
 import suggestions_pb2 as sugg_pb2
 import suggestions_pb2_grpc as sugg_grpc
 
+import order_queue_pb2 as oq_pb2
+import order_queue_pb2_grpc as oq_grpc
+
 app = Flask(__name__)
 CORS(app)
 
@@ -40,6 +46,7 @@ CORS(app)
 FRAUD_ADDR = "fraud_detection:50051"
 TX_ADDR = "transaction_verification:50052"
 SUGG_ADDR = "suggestions:50053"
+ORDER_QUEUE_ADDR = "order_queue:50051"
 
 # Merge multiple vector clocks into a single one
 def merge_clocks(*clock_strings):
@@ -204,6 +211,30 @@ def checkout():
     sugg_clock = resp_sugg.clock
      # Build the suggestions list
     suggestions_list = [{"title": s.title, "author": s.author} for s in resp_sugg.suggestions]
+
+    # Step 7 - Order Queue: Enqueue the valid order.
+    try:
+        with grpc.insecure_channel(ORDER_QUEUE_ADDR) as channel:
+            oq_stub = oq_grpc.OrderQueueServiceStub(channel)
+            enqueue_request = oq_pb2.EnqueueRequest(
+                order=oq_pb2.Order(
+                    order_id=order_id,
+                    priority=1,  # Default priority 
+                    details=json.dumps(checkout_data)
+                )
+            )
+            eq_response = oq_stub.Enqueue(enqueue_request)  # Enqueue the order
+            logger.info(f"[Orchestrator] Enqueue response: {eq_response.message}")
+            if not eq_response.success:
+                raise Exception(eq_response.message)
+    except Exception as e:  # Handle gRPC errors and other exceptions
+        logger.error(f"[Orchestrator] Order enqueue failed: {e}")
+        return jsonify({
+            "orderId": order_id,
+            "status": "Order Rejected",
+            "message": f"Order enqueue failed: {e}",
+            "suggestedBooks": []
+        }), 200
 
     # Final merge - combine all clocks from initialization and each event.
     final_clock = merge_clocks(init_clock, tv_results["items"].clock, 
