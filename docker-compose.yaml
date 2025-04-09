@@ -1,86 +1,129 @@
-version: '3'
+version: "3.9"
+
 services:
   frontend:
     build:
-      # Use the current directory as the build context
-      # This allows us to access the files in the current directory inside the Dockerfile
-      context: ./
+      context: .
       dockerfile: ./frontend/Dockerfile
     ports:
-      # Expose port 8080 on the host, and map port 80 of the container to port 8080 on the host
-      # Access the application at http://localhost:8080
       - "8080:80"
     volumes:
-      # Mount the frontend directory
       - ./frontend/src:/usr/share/nginx/html
+    environment:
+      - PYTHONPATH=/app
+
   orchestrator:
     build:
-      # Use the current directory as the build context
-      # This allows us to access the files in the current directory inside the Dockerfile
-      context: ./
-      # Use the Dockerfile in the orchestrator directory
+      context: .
       dockerfile: ./orchestrator/Dockerfile
     ports:
-      # Expose port 8081 on the host, and map port 5000 of the container to port 8081 on the host
-      - 8081:5000
+      - "8081:5000"
     environment:
-      # Pass the environment variables to the container
-      # The PYTHONUNBUFFERED environment variable ensures that the output from the application is logged to the console
       - PYTHONUNBUFFERED=TRUE
-      # The PYTHONFILE environment variable specifies the absolute entry point of the application
-      # Check app.py in the orchestrator directory to see how this is used
       - PYTHONFILE=/app/orchestrator/src/app.py
+      - PYTHONPATH=/app
     volumes:
-      # Mount the utils directory in the current directory to the /app/utils directory in the container
       - ./utils:/app/utils
-      # Mount the orchestrator/src directory in the current directory to the /app/orchestrator/src directory in the container
       - ./orchestrator/src:/app/orchestrator/src
       - ./utils/pb/suggestions:/app/suggestions
+    command: python orchestrator/src/app.py
 
   fraud_detection:
     build:
-      # Use the current directory as the build context
-      # This allows us to access the files in the current directory inside the Dockerfile
-      context: ./
-      # Use the Dockerfile in the fraud_detection directorys
+      context: .
       dockerfile: ./fraud_detection/Dockerfile
     ports:
-      # Expose port 50051 on the host, and map port 50051 of the container to port 50051 on the host
-      - 50051:50051
+      - "50051:50051"
     environment:
-      # Pass the environment variables to the container
-      # The PYTHONUNBUFFERED environment variable ensures that the output from the application is logged to the console
       - PYTHONUNBUFFERED=TRUE
-      # The PYTHONFILE environment variable specifies the absolute entry point of the application
-      # Check app.py in the fraud_detection directory to see how this is used
       - PYTHONFILE=/app/fraud_detection/src/app.py
+      - PYTHONPATH=/app
     volumes:
-      # Mount the utils directory in the current directory to the /app/utils directory in the container
       - ./utils:/app/utils
-      # Mount the fraud_detection/src directory in the current directory to the /app/fraud_detection/src directory in the container
       - ./fraud_detection/src:/app/fraud_detection/src
+    command: python fraud_detection/src/app.py
+
   transaction_verification:
     build:
-      context: ./
+      context: .
       dockerfile: ./transaction_verification/Dockerfile
     ports:
       - "50052:50052"
     environment:
       - PYTHONUNBUFFERED=TRUE
       - PYTHONFILE=/app/transaction_verification/src/app.py
+      - PYTHONPATH=/app
     volumes:
       - ./utils:/app/utils
       - ./transaction_verification/src:/app/transaction_verification/src
+    command: python transaction_verification/src/app.py
+
   suggestions:
     build:
-      context: ./
+      context: .
       dockerfile: ./suggestions/Dockerfile
     ports:
       - "50053:50053"
     environment:
       - PYTHONUNBUFFERED=TRUE
       - PYTHONFILE=/app/suggestions/src/app.py
+      - PYTHONPATH=/app
     volumes:
       - ./utils:/app/utils
       - ./suggestions/src:/app/suggestions/src
+    command: python suggestions/src/app.py
 
+  order_queue:
+    build:
+      context: .
+      dockerfile: ./order_queue/Dockerfile
+    ports:
+      - "50054:50051"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/order_queue/src/app.py
+      - PYTHONPATH=/app:/app/utils/pb/order_queue
+    volumes:
+      - ./utils:/app/utils
+      - ./order_queue/src:/app/order_queue/src
+    command: python order_queue/src/app.py
+
+  order_executor_1:
+    build:
+      context: .
+      dockerfile: ./order_executor/Dockerfile
+    container_name: order_executor_1
+    ports:
+      - "50055:50052"
+    environment:
+      - EXECUTOR_ID=executor_1
+      - EXECUTOR_PEERS=executor_1,executor_2
+      - EXECUTOR_PEER_ADDRS=executor_1:order_executor_1:50052,executor_2:order_executor_2:50052
+      - ORDER_QUEUE_HOST=order_queue
+      - ORDER_QUEUE_PORT=50051
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONPATH=/app:/app/utils/pb/order_executor:/app/utils/pb/order_queue
+    volumes:
+      - ./utils:/app/utils
+      - ./order_executor/src:/app/order_executor/src
+    command: python order_executor/src/app.py
+
+  order_executor_2:
+    build:
+      context: .
+      dockerfile: ./order_executor/Dockerfile
+    container_name: order_executor_2
+    ports:
+      - "50056:50052"
+    environment:
+      - EXECUTOR_ID=executor_2
+      - EXECUTOR_PEERS=executor_1,executor_2
+      - EXECUTOR_PEER_ADDRS=executor_1:order_executor_1:50052,executor_2:order_executor_2:50052
+      - ORDER_QUEUE_HOST=order_queue
+      - ORDER_QUEUE_PORT=50051
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONPATH=/app:/app/utils/pb/order_executor:/app/utils/pb/order_queue
+    volumes:
+      - ./utils:/app/utils
+      - ./order_executor/src:/app/order_executor/src
+    command: python order_executor/src/app.py

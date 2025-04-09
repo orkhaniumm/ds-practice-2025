@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package orderqueue;
+
+option go_package = "orderqueuepb";
+
+message Order {
+  string order_id = 1;
+  int32 priority = 2;
+  string details = 3;
+}
+
+message EnqueueRequest {
+  Order order = 1;
+}
+
+message EnqueueResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message DequeueRequest {
+}
+
+message DequeueResponse {
+  Order order = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+service OrderQueueService {
+  rpc Enqueue(EnqueueRequest) returns (EnqueueResponse);
+  rpc Dequeue(DequeueRequest) returns (DequeueResponse);
+}
