@@ -1,15 +1,20 @@
-# Use an official Python runtime as the base image
 FROM python:3.11
 
-# Set the working directory in the container
-# Both the utils and src folders will be mounted as volumes, please see docker-compose.yaml
 WORKDIR /app
 
-# Copy the requirements file to the working directory
+# Copy the requirements file and install dependencies.
 COPY ./order_executor/requirements.txt .
-
-# Install the Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Set the command to run the container using the hotreload script
-CMD python utils/other/hotreload.py "order_executor/src/app.py"
+# Copy your Order Executor source code.
+COPY ./order_executor/src/ /app/order_executor/src/
+
+# Copy the Order Executor proto stubs
+COPY ./utils/pb/order_executor/order_executor_pb2.py /app/order_executor_pb2.py
+COPY ./utils/pb/order_executor/order_executor_pb2_grpc.py /app/order_executor_pb2_grpc.py
+
+COPY ./utils/pb/order_queue/order_queue_pb2.py /app/order_queue_pb2.py
+COPY ./utils/pb/order_queue/order_queue_pb2_grpc.py /app/order_queue_pb2_grpc.py
+
+# Set the command to run the Order Executor application directly.
+CMD ["python", "order_executor/src/app.py"]

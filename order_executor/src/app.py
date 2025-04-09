@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import threading
+import socket # For hostname resolution
 from concurrent import futures
 import grpc
 
@@ -20,26 +21,51 @@ HEARTBEAT_TIMEOUT = 15
 
 class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceServicer):
     def __init__(self):
-        self.executor_id = os.environ.get("EXECUTOR_ID", "executor_1") # get executor ID from environment variable
-        peer_str = os.environ.get("EXECUTOR_PEERS", self.executor_id) # get peer ID
-        self.peers = [peer.strip() for peer in peer_str.split(",")]
-        logger.info(f"[Initialization] Executor ID: '{self.executor_id}', Peers: {self.peers}")
+        # Set executor ID
+        self.executor_id = os.environ.get("EXECUTOR_ID", socket.gethostname())
+        
+        # Retrieve peer IDs
+        peer_str = os.environ.get("EXECUTOR_PEERS", "")
+        if peer_str:
+            self.peers = [peer.strip() for peer in peer_str.split(",") if peer.strip()]
+        else:
+            self.peers = []
+        logger.info(f"[Initialization] Executor ID: '{self.executor_id}', Peers (from EXECUTOR_PEERS): {self.peers}")
 
-        ### Dynamic Allocation ###
+        # Dynamic Allocation: parse peer addresses from the environment.
+        self.peer_addr_map = {}
         peer_addr_str = os.environ.get("EXECUTOR_PEER_ADDRS", "")
-        self.peer_addr_map = {} # peer_addr_map: { peer_id: (host, port) }
         if peer_addr_str:
             for item in peer_addr_str.split(","):
-                try:
-                    pid, host, port = item.strip().split(":")
-                    self.peer_addr_map[pid] = (host, port)
-                except Exception as e:
-                    logger.error(f"[Initialization] Error parsing peer address '{item}': {e}")
+                parts = item.strip().split(":")
+                if len(parts) == 2:
+                    pid, port = parts
+                    host = pid
+                elif len(parts) == 3:
+                    pid, host, port = parts
+                else:
+                    logger.error(f"[Initialization] Error parsing peer address '{item}': expected 'peerID:port' or 'peerID:host:port', got {parts}")
+                    continue
+                self.peer_addr_map[pid] = (host, port)
+        else:
+            # Fallback to dynamic resolution if no addresses are provided.
+            try:
+                hostname, aliaslist, ipaddrlist = socket.gethostbyname_ex("tasks.order_executor")
+                # First IP address is the one to be used.
+                for ip in ipaddrlist:
+                    self.peer_addr_map[ip] = (ip, "50052")
+                    self.peers.append(ip)
+            except Exception as e:
+                logger.error(f"[Initialization] Dynamic peer resolution failed: {e}")
         logger.info(f"[Initialization] Peer addresses: {self.peer_addr_map}")
 
-        # Initialize peer status with current time.
-        self.peer_status = {peer: time.time() for peer in self.peers if peer != self.executor_id}
+        # Initialize peer_status with current time for each known peer.
+        self.peer_status = {}
+        for peer in self.peers:
+            if peer != self.executor_id:
+                self.peer_status[peer] = time.time()
         self.peer_status[self.executor_id] = time.time()
+        logger.info(f"[Initialization] Initial peer status: {self.peer_status}")
 
         # Determine if this instance is the leader.
         self.is_leader = self.determine_leader()
@@ -55,10 +81,8 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
 
         # Start heartbeat sender and monitor threads
         self.running = True
-        self.heartbeat_thread = threading.Thread(target=self.send_heartbeats, daemon=True)
-        self.heartbeat_thread.start()
-        self.monitor_thread = threading.Thread(target=self.monitor_leader, daemon=True)
-        self.monitor_thread.start()
+        threading.Thread(target=self.send_heartbeats, daemon=True).start()
+        threading.Thread(target=self.monitor_leader, daemon=True).start()
 
     def determine_leader(self) -> bool:
         """
@@ -67,39 +91,38 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         the one with the lowest ID is elected as the leader.
         """
         current_time = time.time()
-        alive_peers = [peer for peer, last_seen in self.peer_status.items() if (current_time - last_seen) < HEARTBEAT_TIMEOUT]
-        # Always include self if alive (which it is)
-        if self.executor_id not in alive_peers:
-            alive_peers.append(self.executor_id)
-        alive_peers = sorted(alive_peers)
-        new_leader = alive_peers[0] if alive_peers else self.executor_id
-        leader_status = (self.executor_id == new_leader)
-        logger.info(f"[Leader Election] Alive executors: {alive_peers}. New leader: {new_leader}. This instance: {self.executor_id} leader? {leader_status}")
-        return leader_status
+        alive = [peer for peer, last_seen in self.peer_status.items() if (current_time - last_seen) < HEARTBEAT_TIMEOUT]
+        # Ensure self is included.
+        if self.executor_id not in alive:
+            alive.append(self.executor_id)
+        alive.sort()  # Lexicographical order.
+        elected = alive[0] if alive else self.executor_id
+        status = (self.executor_id == elected)
+        logger.info(f"[Leader Election] Alive executors: {alive}. Elected leader: {elected}. {self.executor_id} leader? {status}")
+        return status
 
     def send_heartbeats(self):
         """
         Periodically send a heartbeat (ping RPC) to all peers.
         """
         while self.running:
-            for peer_id, addr in self.peer_addr_map.items():
-                # Skip sending heartbeat to self
+            # Update self heartbeat.
+            self.peer_status[self.executor_id] = time.time()
+            # Iterate through each peer in the address map.
+            for peer_id, (host, port) in self.peer_addr_map.items():
+                # Skip self.
                 if peer_id == self.executor_id:
                     continue
-                host, port = addr
                 target = f"{host}:{port}"
                 try:
                     with grpc.insecure_channel(target) as channel:
                         stub = order_executor_pb2_grpc.OrderExecutorServiceStub(channel)
                         response = stub.Ping(order_executor_pb2.PingRequest(), timeout=2)
                         if response:
-                            # Update the last seen timestamp for the peer
                             self.peer_status[peer_id] = time.time()
-                            logger.info(f"[Heartbeat] Received ping response from {peer_id} at {target}: {response.message}")
+                            logger.info(f"[Heartbeat] {self.executor_id} received ping response from {peer_id} at {target}: {response.message}")
                 except Exception as e:
-                    logger.warning(f"[Heartbeat] Failed to ping {peer_id} at {target}: {e}")
-            # Update self heartbeat
-            self.peer_status[self.executor_id] = time.time()
+                    logger.warning(f"[Heartbeat] {self.executor_id} failed to ping {peer_id} at {target}: {e}")
             time.sleep(HEARTBEAT_INTERVAL)
 
     def monitor_leader(self):
@@ -108,48 +131,42 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         This thread checks if the current instance is still the leader
         """
         while self.running:
-            prev_status = self.is_leader
+            previous = self.is_leader
             self.is_leader = self.determine_leader()
-            if prev_status != self.is_leader:
+            if self.is_leader != previous:
                 if self.is_leader:
-                    logger.info(f"[Leader Change] Instance '{self.executor_id}' has become the new leader.")
+                    logger.info(f"[Leader Change] {self.executor_id} has become the new leader.")
                 else:
-                    logger.info(f"[Leader Change] Instance '{self.executor_id}' is no longer the leader.")
-            time.sleep(HEARTBEAT_INTERVAL)  # Check the leader status periodically
+                    logger.info(f"[Leader Change] {self.executor_id} is no longer the leader.")
+            time.sleep(HEARTBEAT_INTERVAL)
 
     def ExecuteNextOrder(self, request, context):
         """
         RPC method to execute the next order in the queue.
         This method is only executed by the leader instance.
         """
-        logger.info(f"[RPC] Received ExecuteNextOrder request on instance '{self.executor_id}'")
-        
+        logger.info(f"[RPC] {self.executor_id} received ExecuteNextOrder request.")
         if not self.is_leader:
-            message = f"Instance '{self.executor_id}' is not the leader. Skipping order execution."
-            logger.info(f"[Leader Check] {message}")
-            return order_executor_pb2.ExecuteOrderResponse(success=False, message=message)
-
-        logger.info(f"[Execution] Leader instance '{self.executor_id}' is processing the order execution.")
-
-        # Dequeue an order from the Order Queue
+            msg = f"{self.executor_id} is not the leader. Skipping execution."
+            logger.info(f"[Leader Check] {msg}")
+            return order_executor_pb2.ExecuteOrderResponse(success=False, message=msg)
+        logger.info(f"[Execution] Leader {self.executor_id} is executing the order.")
         try:
-            logger.info("[Dequeue Request] Sending dequeue request to Order Queue service.")
+            logger.info("[Dequeue Request] Sending dequeue request to Order Queue.")
             dq_response = self.order_queue_stub.Dequeue(order_queue_pb2.DequeueRequest())
-            logger.info(f"[Dequeue Response] Received response: {dq_response}")
+            logger.info(f"[Dequeue Response] {dq_response}")
         except Exception as e:
-            error_msg = f"Error calling Order Queue Dequeue: {e}"
+            error_msg = f"Error calling Dequeue RPC: {e}"
             logger.error(f"[RPC Error] {error_msg}")
             return order_executor_pb2.ExecuteOrderResponse(success=False, message=error_msg)
-
         if not dq_response.success:
-            message = f"No order dequeued: {dq_response.message}"
-            logger.info(f"[Dequeue] {message}")
-            return order_executor_pb2.ExecuteOrderResponse(success=False, message=message)
+            msg = f"No order dequeued: {dq_response.message}"
+            logger.info(f"[Dequeue] {msg}")
+            return order_executor_pb2.ExecuteOrderResponse(success=False, message=msg)
 
         order_id = dq_response.order.order_id
-        log_msg = f"Order '{order_id}' is being executed by leader '{self.executor_id}'."
+        log_msg = f"Order '{order_id}' executed by leader {self.executor_id}."
         logger.info(f"[Order Execution] {log_msg}")
-
         return order_executor_pb2.ExecuteOrderResponse(success=True, message=log_msg)
 
     def Ping(self, request, context):
@@ -157,21 +174,17 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         RPC method to respond to a ping request.
         """
         reply = f"{self.executor_id} alive"
-        logger.info(f"[Ping] Received Ping. Responding with: {reply}")
+        logger.info(f"[Ping] {self.executor_id} received Ping; replying: {reply}")
         return order_executor_pb2.PingResponse(message=reply)
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    order_executor_pb2_grpc.add_OrderExecutorServiceServicer_to_server(
-        OrderExecutorServiceServicer(), server
-    )
-    # Bind to port
+    order_executor_pb2_grpc.add_OrderExecutorServiceServicer_to_server(OrderExecutorServiceServicer(), server)
     port = os.environ.get("ORDER_EXECUTOR_PORT", "50052")
     server_address = f"[::]:{port}"
     server.add_insecure_port(server_address)
     server.start()
     logger.info(f"[Server Start] Order Executor service started and listening on {server_address}.")
-    
     try:
         while True:
             time.sleep(60)  # Keep the server alive
