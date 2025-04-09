@@ -93,16 +93,14 @@ services:
       context: .
       dockerfile: ./order_executor/Dockerfile
     container_name: order_executor_1
-    ports:
-      - "50055:50052"
     environment:
-      - EXECUTOR_ID=executor_1
-      - EXECUTOR_PEERS=executor_1,executor_2
-      - EXECUTOR_PEER_ADDRS=executor_1:order_executor_1:50052,executor_2:order_executor_2:50052
+      - EXECUTOR_ID=order_executor_1
+      - EXECUTOR_PEERS=order_executor_1,order_executor_2,order_executor_3
+      - EXECUTOR_PEER_ADDRS=order_executor_1:50052,order_executor_2:50052,order_executor_3:50052
       - ORDER_QUEUE_HOST=order_queue
       - ORDER_QUEUE_PORT=50051
       - PYTHONUNBUFFERED=TRUE
-      - PYTHONPATH=/app:/app/utils/pb/order_executor:/app/utils/pb/order_queue
+      - PYTHONPATH=/app
     volumes:
       - ./utils:/app/utils
       - ./order_executor/src:/app/order_executor/src
@@ -113,16 +111,32 @@ services:
       context: .
       dockerfile: ./order_executor/Dockerfile
     container_name: order_executor_2
-    ports:
-      - "50056:50052"
     environment:
-      - EXECUTOR_ID=executor_2
-      - EXECUTOR_PEERS=executor_1,executor_2
-      - EXECUTOR_PEER_ADDRS=executor_1:order_executor_1:50052,executor_2:order_executor_2:50052
+      - EXECUTOR_ID=order_executor_2
+      - EXECUTOR_PEERS=order_executor_1,order_executor_2,order_executor_3
+      - EXECUTOR_PEER_ADDRS=order_executor_1:50052,order_executor_2:50052,order_executor_3:50052
       - ORDER_QUEUE_HOST=order_queue
       - ORDER_QUEUE_PORT=50051
       - PYTHONUNBUFFERED=TRUE
-      - PYTHONPATH=/app:/app/utils/pb/order_executor:/app/utils/pb/order_queue
+      - PYTHONPATH=/app
+    volumes:
+      - ./utils:/app/utils
+      - ./order_executor/src:/app/order_executor/src
+    command: python order_executor/src/app.py
+
+  order_executor_3:
+    build:
+      context: .
+      dockerfile: ./order_executor/Dockerfile
+    container_name: order_executor_3
+    environment:
+      - EXECUTOR_ID=order_executor_3
+      - EXECUTOR_PEERS=order_executor_1,order_executor_2,order_executor_3
+      - EXECUTOR_PEER_ADDRS=order_executor_1:50052,order_executor_2:50052,order_executor_3:50052
+      - ORDER_QUEUE_HOST=order_queue
+      - ORDER_QUEUE_PORT=50051
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONPATH=/app
     volumes:
       - ./utils:/app/utils
       - ./order_executor/src:/app/order_executor/src
