@@ -30,11 +30,11 @@ Sends API request to Google Books and retrieves 3 most relevant books. If no suc
 
 ## Order Queue
 
-A FIFO structure that stores incoming orders.
+A priority queue that stores incoming orders.
 
 ## Order Execution
 
-The leader retrieves and processes orders from the queue.
+Group of replicated instances responsible for processing orders from the queue and uses leader election to coordinate.
 
 
 
