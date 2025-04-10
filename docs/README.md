@@ -1,12 +1,12 @@
 # Documentation
 
-### Architecture diagram
+### Vector Clock Diagram
 
-![architecture_diagram](Architecture%20Diagram.png)
+![vector_clock_diagram](Vector%20Clock%20Diagram.jpeg)
 
-### System diagram
+### Leader Election Diagram
 
-![system_diagram](System%20Diagram.png)
+![leader_election_diagram](Leader_election_diagram.png)
 
 ### Frontend
 
@@ -28,6 +28,13 @@ Verifies based on card number length and numerical characters.
 
 Sends API request to Google Books and retrieves 3 most relevant books. If no such entities found, can use a static fallback list of books.
 
+## Order Queue
+
+A priority queue that stores incoming orders.
+
+## Order Execution
+
+Group of replicated instances responsible for processing orders from the queue and uses leader election to coordinate.
 
 
 
