@@ -2,7 +2,7 @@
 
 ### Vector Clock Diagram
 
-![vector_clock_diagram](Vector%20Clock%20Diagram.jpeg)
+![vector_clock_diagram](vector_clocks_diagram.png)
 
 ### Leader Election Diagram
 
