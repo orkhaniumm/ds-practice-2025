@@ -101,9 +101,15 @@ services:
       - ORDER_QUEUE_PORT=50051
       - PYTHONUNBUFFERED=TRUE
       - PYTHONPATH=/app
+      - BOOKS_DB_PRIMARY_ADDR=books_database_1:50060
     volumes:
       - ./utils:/app/utils
       - ./order_executor/src:/app/order_executor/src
+    depends_on:
+      - order_queue
+      - books_database_1
+      - books_database_2
+      - books_database_3
     command: python order_executor/src/app.py
 
   order_executor_2:
@@ -119,9 +125,15 @@ services:
       - ORDER_QUEUE_PORT=50051
       - PYTHONUNBUFFERED=TRUE
       - PYTHONPATH=/app
+      - BOOKS_DB_PRIMARY_ADDR=books_database_1:50060
     volumes:
       - ./utils:/app/utils
       - ./order_executor/src:/app/order_executor/src
+    depends_on:
+      - order_queue
+      - books_database_1
+      - books_database_2
+      - books_database_3
     command: python order_executor/src/app.py
 
   order_executor_3:
@@ -137,7 +149,77 @@ services:
       - ORDER_QUEUE_PORT=50051
       - PYTHONUNBUFFERED=TRUE
       - PYTHONPATH=/app
+      - BOOKS_DB_PRIMARY_ADDR=books_database_1:50060
     volumes:
       - ./utils:/app/utils
       - ./order_executor/src:/app/order_executor/src
+    depends_on:
+      - order_queue
+      - books_database_1
+      - books_database_2
+      - books_database_3
     command: python order_executor/src/app.py
+
+  books_database_1:
+    build:
+      context: .
+      dockerfile: ./books_database/Dockerfile
+    container_name: books_database_1
+    hostname: books_database_1
+    ports:
+      - "50055:50060"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONPATH=/app
+      - REPLICA_ID=books_database_1
+      - PRIMARY_ID=books_database_1 
+      - REPLICA_PORT=50060       
+      - PEER_ADDRS=books_database_1:50060,books_database_2:50060,books_database_3:50060
+    volumes:
+      - ./utils:/app/utils
+      - ./books_database/src:/app/books_database/src
+    command: python books_database/src/app.py
+
+  books_database_2:
+    build:
+      context: .
+      dockerfile: ./books_database/Dockerfile
+    container_name: books_database_2
+    hostname: books_database_2
+    ports:
+      - "50056:50060"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONPATH=/app
+      - REPLICA_ID=books_database_2
+      - PRIMARY_ID=books_database_1
+      - REPLICA_PORT=50060
+      - PEER_ADDRS=books_database_1:50060,books_database_2:50060,books_database_3:50060
+    volumes:
+      - ./utils:/app/utils
+      - ./books_database/src:/app/books_database/src
+    depends_on:
+      - books_database_1
+    command: python books_database/src/app.py
+
+  books_database_3:
+    build:
+      context: .
+      dockerfile: ./books_database/Dockerfile
+    container_name: books_database_3
+    hostname: books_database_3
+    ports:
+      - "50057:50060"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONPATH=/app
+      - REPLICA_ID=books_database_3
+      - PRIMARY_ID=books_database_1
+      - REPLICA_PORT=50060
+      - PEER_ADDRS=books_database_1:50060,books_database_2:50060,books_database_3:50060
+    volumes:
+      - ./utils:/app/utils
+      - ./books_database/src:/app/books_database/src
+    depends_on:
+      - books_database_1
+    command: python books_database/src/app.py
