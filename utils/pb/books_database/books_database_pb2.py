@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n,utils/pb/books_database/books_database.proto\x12\rbooksdatabase\"\x1c\n\x0bReadRequest\x12\r\n\x05title\x18\x01 \x01(\t\"\x1d\n\x0cReadResponse\x12\r\n\x05stock\x18\x01 \x01(\x05\"0\n\x0cWriteRequest\x12\r\n\x05title\x18\x01 \x01(\t\x12\x11\n\tnew_stock\x18\x02 \x01(\x05\" \n\rWriteResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x32\x94\x01\n\rBooksDatabase\x12?\n\x04Read\x12\x1a.booksdatabase.ReadRequest\x1a\x1b.booksdatabase.ReadResponse\x12\x42\n\x05Write\x12\x1b.booksdatabase.WriteRequest\x1a\x1c.booksdatabase.WriteResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n,utils/pb/books_database/books_database.proto\x12\rbooksdatabase\"\x1c\n\x0bReadRequest\x12\r\n\x05title\x18\x01 \x01(\t\"\x1d\n\x0cReadResponse\x12\r\n\x05stock\x18\x01 \x01(\x05\"0\n\x0cWriteRequest\x12\r\n\x05title\x18\x01 \x01(\t\x12\x11\n\tnew_stock\x18\x02 \x01(\x05\" \n\rWriteResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\"E\n\x15\x44\x65\x63rementStockRequest\x12\r\n\x05title\x18\x01 \x01(\t\x12\x1d\n\x15quantity_to_decrement\x18\x02 \x01(\x05\">\n\x16\x44\x65\x63rementStockResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x13\n\x0b\x66inal_stock\x18\x02 \x01(\x05\x32\xf3\x01\n\rBooksDatabase\x12?\n\x04Read\x12\x1a.booksdatabase.ReadRequest\x1a\x1b.booksdatabase.ReadResponse\x12\x42\n\x05Write\x12\x1b.booksdatabase.WriteRequest\x1a\x1c.booksdatabase.WriteResponse\x12]\n\x0e\x44\x65\x63rementStock\x12$.booksdatabase.DecrementStockRequest\x1a%.booksdatabase.DecrementStockResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -39,6 +39,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_WRITEREQUEST']._serialized_end=172
   _globals['_WRITERESPONSE']._serialized_start=174
   _globals['_WRITERESPONSE']._serialized_end=206
-  _globals['_BOOKSDATABASE']._serialized_start=209
-  _globals['_BOOKSDATABASE']._serialized_end=357
+  _globals['_DECREMENTSTOCKREQUEST']._serialized_start=208
+  _globals['_DECREMENTSTOCKREQUEST']._serialized_end=277
+  _globals['_DECREMENTSTOCKRESPONSE']._serialized_start=279
+  _globals['_DECREMENTSTOCKRESPONSE']._serialized_end=341
+  _globals['_BOOKSDATABASE']._serialized_start=344
+  _globals['_BOOKSDATABASE']._serialized_end=587
 # @@protoc_insertion_point(module_scope)

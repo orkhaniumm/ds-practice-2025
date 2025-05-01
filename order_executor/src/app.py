@@ -246,52 +246,38 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
             self.logger.error(f"[Dequeue] Unexpected error: {e}", exc_info=True)
 
     def _process_order(self, order):
-        """ Processes a single dequeued order: chcks stock, updates if possible."""
+        """Processes a single dequeued order: calls DecrementStock."""
         order_id = order.order_id
         self.logger.info(f"[Processing] Start processing order {order_id}...")
 
         try:
-            # Parse order details
             order_data = json.loads(order.details)
-            if not order_data or 'items' not in order_data or not order_data['items']:
-                 self.logger.error(f"[Processing] Order {order_id}: Invalid/missing items data.")
-                 return
-
             first_item = order_data['items'][0]
             title = first_item.get('name')
             quantity = first_item.get('quantity')
 
-            if not title or not isinstance(quantity, int) or quantity <= 0:
-                self.logger.error(f"[Processing] Order {order_id}: Invalid title or quantity in first item.")
-                return
+            self.logger.info(f"[DB Interaction] Order {order_id}: Attempting to decrement stock for '{title}' by {quantity}.")
+            
+            decrement_request = books_pb2.DecrementStockRequest(
+                title=title, 
+                quantity_to_decrement=quantity
+            )
+            
+            decrement_response = self.db_stub.DecrementStock(
+                decrement_request, 
+                timeout=GRPC_TIMEOUT_SEC 
+            )
 
-            # Interact with Database (Read Stock)
-            self.logger.info(f"[DB Read] Order {order_id}: Checking stock for '{title}' (Qty: {quantity})")
-            read_request = books_pb2.ReadRequest(title=title)
-            read_response = self.db_stub.Read(read_request, timeout=GRPC_TIMEOUT_SEC)
-            current_stock = read_response.stock
-            self.logger.info(f"[DB Read] Order {order_id}: Current stock for '{title}' is {current_stock}")
-
-            # Check Availability and Update Stock (Write)
-            if current_stock >= quantity:
-                new_stock = current_stock - quantity
-                self.logger.info(f"[DB Write] Order {order_id}: Sufficient stock. Updating '{title}' to {new_stock}.")
-                write_request = books_pb2.WriteRequest(title=title, new_stock=new_stock)
-                write_response = self.db_stub.Write(write_request, timeout=GRPC_TIMEOUT_SEC)
-
-                if write_response.success:
-                    self.logger.info(f"[Execution Success] Order {order_id}: Stock for '{title}' updated to {new_stock}.")
-                else:
-                    self.logger.error(f"[Execution Failed] Order {order_id}: Database write failed for '{title}'.")
+            if decrement_response.success:
+                self.logger.info(f"[Execution Success] Order {order_id}: Stock for '{title}' decremented. New stock: {decrement_response.final_stock}.")
             else:
-                # Insufficient Stock
-                self.logger.warning(f"[Execution Failed] Order {order_id}: Insufficient stock for '{title}' (Req: {quantity}, Avail: {current_stock}).")
+                self.logger.warning(f"[Execution Failed] Order {order_id}: Failed to decrement stock for '{title}' (Insufficient stock?). Current stock: {decrement_response.final_stock}.")
 
         # --- Error Handling ---
         except json.JSONDecodeError as e:
              self.logger.error(f"[Processing] Order {order_id}: Failed to parse JSON details: {e}")
         except grpc.RpcError as e:
-             self.logger.error(f"[DB Interaction] Order {order_id}: gRPC error: {e.code()} - {e.details()}")
+             self.logger.error(f"[DB Interaction] Order {order_id}: gRPC error during DecrementStock: {e.code()} - {e.details()}")
         except Exception as e:
              self.logger.error(f"[Processing] Order {order_id}: Unexpected error: {e}", exc_info=True)
 

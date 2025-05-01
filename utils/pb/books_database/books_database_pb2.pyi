@@ -29,3 +29,19 @@ class WriteResponse(_message.Message):
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     success: bool
     def __init__(self, success: bool = ...) -> None: ...
+
+class DecrementStockRequest(_message.Message):
+    __slots__ = ("title", "quantity_to_decrement")
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    QUANTITY_TO_DECREMENT_FIELD_NUMBER: _ClassVar[int]
+    title: str
+    quantity_to_decrement: int
+    def __init__(self, title: _Optional[str] = ..., quantity_to_decrement: _Optional[int] = ...) -> None: ...
+
+class DecrementStockResponse(_message.Message):
+    __slots__ = ("success", "final_stock")
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    FINAL_STOCK_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    final_stock: int
+    def __init__(self, success: bool = ..., final_stock: _Optional[int] = ...) -> None: ...

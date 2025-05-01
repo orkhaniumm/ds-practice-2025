@@ -6,6 +6,8 @@ service BooksDatabase {
   rpc Read (ReadRequest) returns (ReadResponse);
 
   rpc Write (WriteRequest) returns (WriteResponse);
+
+  rpc DecrementStock (DecrementStockRequest) returns (DecrementStockResponse);
 }
 
 message ReadRequest {
@@ -23,4 +25,14 @@ message WriteRequest {
 
 message WriteResponse {
   bool success = 1;
+}
+
+message DecrementStockRequest {
+  string title = 1;
+  int32 quantity_to_decrement = 2;
+}
+
+message DecrementStockResponse {
+  bool success = 1; 
+  int32 final_stock = 2;  
 }
