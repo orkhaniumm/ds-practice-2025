@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package booksdatabase;
+
+service BooksDatabase {
+  rpc Read (ReadRequest) returns (ReadResponse);
+
+  rpc Write (WriteRequest) returns (WriteResponse);
+
+  rpc DecrementStock (DecrementStockRequest) returns (DecrementStockResponse);
+}
+
+message ReadRequest {
+  string title = 1;
+}
+
+message ReadResponse {
+  int32 stock = 1;
+}
+
+message WriteRequest {
+  string title = 1;
+  int32 new_stock = 2;
+}
+
+message WriteResponse {
+  bool success = 1;
+}
+
+message DecrementStockRequest {
+  string title = 1;
+  int32 quantity_to_decrement = 2;
+}
+
+message DecrementStockResponse {
+  bool success = 1; 
+  int32 final_stock = 2;  
+}
