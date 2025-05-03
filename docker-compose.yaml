@@ -22,10 +22,12 @@ services:
       - PYTHONUNBUFFERED=TRUE
       - PYTHONFILE=/app/orchestrator/src/app.py
       - PYTHONPATH=/app
+      - BOOKS_DB_PRIMARY_ADDR=books_database_1:50060
     volumes:
       - ./utils:/app/utils
       - ./orchestrator/src:/app/orchestrator/src
       - ./utils/pb/suggestions:/app/suggestions
+      - ./utils/pb/books_database:/app/utils/pb/books_database
     command: python orchestrator/src/app.py
 
   fraud_detection:
@@ -172,8 +174,8 @@ services:
       - PYTHONUNBUFFERED=TRUE
       - PYTHONPATH=/app
       - REPLICA_ID=books_database_1
-      - PRIMARY_ID=books_database_1 
-      - REPLICA_PORT=50060       
+      - PRIMARY_ID=books_database_1
+      - REPLICA_PORT=50060
       - PEER_ADDRS=books_database_1:50060,books_database_2:50060,books_database_3:50060
     volumes:
       - ./utils:/app/utils

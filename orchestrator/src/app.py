@@ -19,25 +19,29 @@ fraud_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/fraud_detecti
 tx_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/transaction_verification'))
 sugg_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/suggestions'))
 order_queue_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/order_queue'))
+books_db_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/books_database'))
 
 # Add directories to system path
 sys.path.insert(0, fraud_path)
 sys.path.insert(0, tx_path)
 sys.path.insert(0, sugg_path)
 sys.path.insert(0, order_queue_path)
+sys.path.insert(0, books_db_path)
 
-# Import gRPC modules for Fraud Detection, Transaction Verification, and Suggestions
+# Import gRPC modules for Fraud Detection, Transaction Verification, Suggestions, Order Queue, and Books Database
 import fraud_detection_pb2 as fd_pb2
 import fraud_detection_pb2_grpc as fd_grpc
-
 import transaction_verification_pb2 as tv_pb2
 import transaction_verification_pb2_grpc as tv_grpc
-
 import suggestions_pb2 as sugg_pb2
 import suggestions_pb2_grpc as sugg_grpc
-
 import order_queue_pb2 as oq_pb2
 import order_queue_pb2_grpc as oq_grpc
+from utils.pb.books_database import books_database_pb2 as books_pb2
+from utils.pb.books_database import books_database_pb2_grpc as books_pb2_grpc
+
+# timeout for DB operations
+grpc.timeout_sec = 3
 
 app = Flask(__name__)
 CORS(app)
@@ -47,6 +51,7 @@ FRAUD_ADDR = "fraud_detection:50051"
 TX_ADDR = "transaction_verification:50052"
 SUGG_ADDR = "suggestions:50053"
 ORDER_QUEUE_ADDR = "order_queue:50051"
+BOOKS_DB_ADDR = os.environ.get('BOOKS_DB_PRIMARY_ADDR')
 
 # Merge multiple vector clocks into a single one
 def merge_clocks(*clock_strings):
@@ -205,14 +210,44 @@ def checkout():
     # Step 6: Suggestions event - GenerateSuggestions
     with grpc.insecure_channel(SUGG_ADDR) as channel:
         stub = sugg_grpc.SuggestionServiceStub(channel)
-        # Extract book title from the items list
         book_title = checkout_data.get("items", [{}])[0].get("name", "Default Book")
-        resp_sugg = stub.GenerateSuggestions(sugg_pb2.SuggestionRequest(orderId=order_id, clock=fd_clock_final, book_title=book_title))
+        resp_sugg = stub.GenerateSuggestions(
+            sugg_pb2.SuggestionRequest(orderId=order_id, clock=fd_clock_final, book_title=book_title)
+        )
     sugg_clock = resp_sugg.clock
-     # Build the suggestions list
     suggestions_list = [{"title": s.title, "author": s.author} for s in resp_sugg.suggestions]
 
-    # Step 7 - Order Queue: Enqueue the valid order.
+    # Step 7: Check and decrement stock in the DB
+    try:
+        with grpc.insecure_channel(BOOKS_DB_ADDR) as channel:
+            db_stub = books_pb2_grpc.BooksDatabaseStub(channel)
+            for item in checkout_data.get("items", []):
+                title = item.get("name")
+                qty = item.get("quantity", 0)
+                resp_db = db_stub.DecrementStock(
+                    books_pb2.DecrementStockRequest(
+                        title=title,
+                        quantity_to_decrement=qty
+                    ),
+                    timeout=3
+                )
+                if not resp_db.success:
+                    return jsonify({
+                        "orderId": order_id,
+                        "status": "Order Rejected",
+                        "message": f"Insufficient stock for '{title}'. Only {resp_db.final_stock} left.",
+                        "suggestedBooks": []
+                    }), 200
+    except grpc.RpcError as e:
+        logger.error(f"[Orchestrator] DB error: {e}")
+        return jsonify({
+            "orderId": order_id,
+            "status": "Order Rejected",
+            "message": "Book Database unavailable, please try later.",
+            "suggestedBooks": []
+        }), 200
+
+    # Step 8 - Order Queue: Enqueue the valid order
     try:
         with grpc.insecure_channel(ORDER_QUEUE_ADDR) as channel:
             oq_stub = oq_grpc.OrderQueueServiceStub(channel)
@@ -236,11 +271,16 @@ def checkout():
             "suggestedBooks": []
         }), 200
 
-    # Final merge - combine all clocks from initialization and each event.
-    final_clock = merge_clocks(init_clock, tv_results["items"].clock, 
-                               tv_results["user"].clock,
-                               resp_cc.clock, resp_fd_user.clock, 
-                               resp_fd_cc.clock, sugg_clock)
+    # Final merge - combine all clocks from initialization and each event
+    final_clock = merge_clocks(
+        init_clock,
+        tv_results["items"].clock,
+        tv_results["user"].clock,
+        resp_cc.clock,
+        resp_fd_user.clock,
+        resp_fd_cc.clock,
+        sugg_clock
+    )
     logger.info(f"[Orchestrator] Final merged clock: {final_clock}")
 
     # Build the response payload
