@@ -4,6 +4,7 @@ import grpc
 from concurrent import futures
 import heapq  # Used for the priority queue
 import itertools 
+import threading 
 
 import order_queue_pb2
 import order_queue_pb2_grpc
@@ -19,13 +20,16 @@ class OrderQueueServiceServicer(order_queue_pb2_grpc.OrderQueueServiceServicer):
         # Initialize priotity queue
         self.priority_queue = []
         heapq.heapify(self.priority_queue)
+        # thread-safety 
+        self.lock = threading.Lock()
         logger.info("Priority queue initialized.")
 
     def Enqueue(self, request, context):
         order = request.order
         count_val = next(counter)  # Get unique counter value
         #  Push the order into the priority queue with negative priority for max-heap behavior
-        heapq.heappush(self.priority_queue, (-order.priority, count_val, order))
+        with self.lock:
+            heapq.heappush(self.priority_queue, (-order.priority, count_val, order))
         logger.info(f"Order enqueued: {order.order_id} with priority {order.priority}")
         return order_queue_pb2.EnqueueResponse(
             success=True,
@@ -34,14 +38,17 @@ class OrderQueueServiceServicer(order_queue_pb2_grpc.OrderQueueServiceServicer):
 
     def Dequeue(self, request, context):
         # Check if the priority queue is empty before popping
-        if not self.priority_queue:
-            logger.warning("Dequeue called, but the priority queue is empty.")
-            return order_queue_pb2.DequeueResponse(
-                success=False,
-                message="Queue is empty."
-            )
-        # Pop the order with the highest priority (lowest negative value)
-        neg_priority, count_val, order = heapq.heappop(self.priority_queue)
+        with self.lock:
+            if not self.priority_queue:
+                # Commented out, making many logs for empty queue
+                # logger.warning("Dequeue called, but the priority queue is empty.")
+                return order_queue_pb2.DequeueResponse(
+                    success=False,
+                    message="Queue is empty."
+                )
+            # Pop the order with the highest priority (lowest negative value)
+            neg_priority, count_val, order = heapq.heappop(self.priority_queue)
+
         logger.info(f"Order dequeued: {order.order_id} with priority {order.priority}")
         return order_queue_pb2.DequeueResponse(
             order=order,

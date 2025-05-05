@@ -38,6 +38,9 @@ class BaseBooksDatabaseServicer(books_pb2_grpc.BooksDatabaseServicer):
         })
         self.logger.info(f"[{self.replica_id}] Initialized store with the data: {self.store}")
 
+        # for 2PC state
+        self.temp_updates = {}
+
     def Read(self, request, context):
         # Handles Read RPC: fetch stock for a given title from local store.
         stock = self.store.get(request.title, 0)
@@ -72,6 +75,26 @@ class BaseBooksDatabaseServicer(books_pb2_grpc.BooksDatabaseServicer):
                 self.logger.warning(f"[DecrementFailed] '{title}' insufficient ({current} < {qty})")
                 return books_pb2.DecrementStockResponse(success=False, final_stock=current)
 
+    # 2PC methods here
+    def Prepare(self, request, context):
+        self.logger.info(f"[Prepare] order={request.order_id}, '{request.title}' -> {request.new_stock}")
+        self.temp_updates[request.order_id] = (request.title, request.new_stock)
+        return books_pb2.PrepareResponse(ready=True, message="Prepared")
+
+    def Commit(self, request, context):
+        tup = self.temp_updates.pop(request.order_id, None)
+        if tup:
+            title, new_stock = tup
+            self.logger.info(f"[Commit] order={request.order_id}, '{title}' -> {new_stock}")
+            self._local_write(title, new_stock)
+        return books_pb2.CommitResponse(success=True, message="Committed")
+
+    def Abort(self, request, context):
+        if request.order_id in self.temp_updates:
+            self.temp_updates.pop(request.order_id, None)
+            self.logger.info(f"[Abort] order={request.order_id}, discarded staged update")
+        return books_pb2.AbortResponse(aborted=True, message="Aborted")
+
 
 # --- Primary Replica Servicer ---
 class PrimaryReplica(BaseBooksDatabaseServicer):
@@ -105,37 +128,24 @@ class PrimaryReplica(BaseBooksDatabaseServicer):
             try:
                 resp = stub.Write(request, timeout=GRPC_TIMEOUT_SEC)
                 if resp.success:
-                    self.logger.info(f"[ReplicateAck] {pid}")
                     ack_count += 1
-                else:
-                    self.logger.warning(f"[ReplicateNack] {pid}")
-            except grpc.RpcError as e:
-                self.logger.error(f"[ReplicateError] {pid}: {e}")
-        return ack_count == required
+            except:
+                pass
+        return (ack_count == required)
 
     def Write(self, request, context):
-        # Primary Write RPC - local writes first, then replicates to backups
-        self.logger.info(f"[PrimaryWrite] '{request.title}' -> {request.new_stock}")
-        if not self._local_write(request.title, request.new_stock):
-            return books_pb2.WriteResponse(success=False)
-        if not self._replicate(request):
-            self.logger.error(f"[PrimaryWriteFailed] replication incomplete")
-            return books_pb2.WriteResponse(success=False)
-        return books_pb2.WriteResponse(success=True)
+        super().Write(request, context)
+        ok = self._replicate(request)
+        if not ok:
+            self.logger.error("[PrimaryWrite] replication failed")
+        return books_pb2.WriteResponse(success=ok)
 
-    def DecrementStock(self, request, context):
-        # Primary DecrementStock RPC - local decrements, then replicates new stock
-        self.logger.info(f"[PrimaryDecrement] '{request.title}' by {request.quantity_to_decrement}")
-        resp = super().DecrementStock(request, context)
-        if not resp.success:
-            return resp
-        write_req = books_pb2.WriteRequest(
-            title=request.title,
-            new_stock=resp.final_stock
-        )
-        if not self._replicate(write_req):
-            self.logger.error(f"[DecrementReplicateFailed] '{request.title}'")
-            return books_pb2.DecrementStockResponse(success=False, final_stock=resp.final_stock)
+    def Commit(self, request, context):
+        resp = super().Commit(request, context)
+        tup = self.store.get(request.title)
+        if tup is not None:
+            write_req = books_pb2.WriteRequest(title=request.title, new_stock=tup)
+            self._replicate(write_req)
         return resp
 
 
@@ -146,25 +156,16 @@ def serve():
     port = os.environ.get('REPLICA_PORT', DEFAULT_REPLICA_PORT)
     peer_addrs = os.environ.get('PEER_ADDRS', '').split(',') if os.environ.get('PEER_ADDRS') else []
 
-    logger = logging.getLogger(replica_id or __name__)
     is_primary = (replica_id == primary_id)
-    servicer = (PrimaryReplica(replica_id, peer_addrs)
-                if is_primary else BaseBooksDatabaseServicer(replica_id))
+    servicer = PrimaryReplica(replica_id, peer_addrs) if is_primary else BaseBooksDatabaseServicer(replica_id)
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     books_pb2_grpc.add_BooksDatabaseServicer_to_server(servicer, server)
-    addr = f"[::]:{port}"
-    server.add_insecure_port(addr)
+    server.add_insecure_port(f"[::]:{port}")
     server.start()
     role = 'PRIMARY' if is_primary else 'BACKUP'
-    logger.info(f"[{replica_id}] {role} listening on {addr}")
-
-    try:
-        while True:
-            time.sleep(86400)
-    except KeyboardInterrupt:
-        logger.info(f"[{replica_id}] Shutting down")
-        server.stop(0)
+    logging.getLogger(replica_id or __name__).info(f"[{replica_id}] {role} listening on port {port}")
+    server.wait_for_termination()
 
 
 if __name__ == '__main__':
