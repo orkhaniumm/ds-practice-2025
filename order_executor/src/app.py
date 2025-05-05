@@ -16,18 +16,21 @@ from utils.pb.order_queue import order_queue_pb2_grpc
 from utils.pb.books_database import books_database_pb2 as books_pb2
 from utils.pb.books_database import books_database_pb2_grpc as books_pb2_grpc
 
+# 2PC import 
+from utils.pb.payment import payment_pb2, payment_pb2_grpc
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s'
 )
-
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_SEC = 7    # Interval for sending heartbeats
 HEARTBEAT_TIMEOUT_SEC = 15   # Time after which a peer is considered dead
 ORDER_QUEUE_POLL_INTERVAL_SEC = 1 # How often the leader polls the queue
 GRPC_TIMEOUT_SEC = 3         # Timeout for gRPC calls (queue, db, ping)
+# 2PC payment service address
+PAYMENT_ADDR = os.environ.get("PAYMENT_ADDR", "payment:50061")
 
 
 class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceServicer):
@@ -45,59 +48,64 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
 
         # --- Peer Configuration ---
         peer_str = os.environ.get("EXECUTOR_PEERS", "")
-        self.peers = [peer.strip() for peer in peer_str.split(",") if peer.strip()] if peer_str else []
+        self.peers = [p.strip() for p in peer_str.split(",") if p.strip()] if peer_str else []
         self.peer_addr_map = self._parse_peer_addrs(os.environ.get("EXECUTOR_PEER_ADDRS", ""))
         self.logger.info(f"Configured Peers: {self.peers}")
         self.logger.info(f"Peer Addresses: {self.peer_addr_map}")
 
         # --- State Variables ---
-        self.peer_status = {peer: time.time() for peer in self.peers if peer != self.executor_id}
-        self.peer_status[self.executor_id] = time.time()
-        self.logger.info(f"Initial Peer Status: {self.peer_status}")
-
-        self.is_leader = False 
-        self.running = True   
-        self.leader_thread = None 
+        now = time.time()
+        self.peer_status = {peer: now for peer in self.peers if peer != self.executor_id}
+        self.peer_status[self.executor_id] = now
+        self.is_leader = False
+        self.running = True
+        self.leader_thread = None
 
         self.order_queue_stub = self._connect_to_order_queue()
         self.db_stub = self._connect_to_database()
+        # gRPC connection to the payment service
+        try:
+            pay_ch = grpc.insecure_channel(PAYMENT_ADDR)
+            self.payment_stub = payment_pb2_grpc.PaymentServiceStub(pay_ch)
+            self.logger.info(f"Connected to PaymentService at {PAYMENT_ADDR}")
+        except Exception as e:
+            self.logger.error(f"FAILED to connect to PaymentService: {e}", exc_info=True)
+            self.payment_stub = None
 
         # Initial leader determination
         self.is_leader = self.determine_leader()
         self.logger.info(f"Initial Leader Status: {self.is_leader}")
 
         # Heartbeat thread
-        heartbeat_thread = threading.Thread(target=self.send_heartbeats_loop, daemon=True)
-        heartbeat_thread.start()
+        threading.Thread(target=self.send_heartbeats_loop, daemon=True).start()
         self.logger.info("Heartbeat thread started.")
 
         # Leader monitoring thread
-        monitor_thread = threading.Thread(target=self.monitor_leader_loop, daemon=True)
-        monitor_thread.start()
+        threading.Thread(target=self.monitor_leader_loop, daemon=True).start()
         self.logger.info("Leader monitor thread started.")
 
         if self.is_leader:
-             self._start_leader_execution_loop()
+            self._start_leader_execution_loop()
 
         self.logger.info("Initialization complete.")
 
     def _parse_peer_addrs(self, peer_addr_str):
         """Parses the EXECUTOR_PEER_ADDRS environment variable."""
         peer_addr_map = {}
-        if peer_addr_str:
-            for item in peer_addr_str.split(","):
-                try:
-                    parts = item.strip().split(':')
-                    if len(parts) == 3:
-                        peer_id, host, port = parts
-                    elif len(parts) == 2:
-                        peer_id, port = parts
-                        host = peer_id
-                    else: raise ValueError("Invalid format")
-                    peer_addr_map[peer_id] = (host, port)
-                except ValueError:
-                    self.logger.error(f"Error parsing peer address '{item}'. Expected format 'peerID:host:port' or 'peerID:port'. Skipping.")
-                    continue
+        for item in (peer_addr_str or "").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            parts = item.split(":")
+            if len(parts) == 3:
+                pid, host, port = parts
+            elif len(parts) == 2:
+                pid, port = parts
+                host = pid
+            else:
+                self.logger.error(f"Invalid peer addr '{item}'")
+                continue
+            peer_addr_map[pid] = (host, port)
         return peer_addr_map
 
     def _connect_to_order_queue(self):
@@ -106,8 +114,8 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         oq_port = os.environ.get("ORDER_QUEUE_PORT", "50051")
         oq_addr = f"{oq_host}:{oq_port}"
         try:
-            self.order_queue_channel = grpc.insecure_channel(oq_addr)
-            stub = order_queue_pb2_grpc.OrderQueueServiceStub(self.order_queue_channel)
+            ch = grpc.insecure_channel(oq_addr)
+            stub = order_queue_pb2_grpc.OrderQueueServiceStub(ch)
             self.logger.info(f"Connected to Order Queue at {oq_addr}")
             return stub
         except Exception as e:
@@ -116,21 +124,17 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
 
     def _connect_to_database(self):
         """Establishes gRPC connection to the primary Books Database replica."""
-        if not books_pb2_grpc:
-            self.logger.warning("BooksDatabase gRPC modules not loaded. DB functionality disabled.")
-            return None
         db_addr = os.environ.get("BOOKS_DB_PRIMARY_ADDR")
-        if db_addr:
-            try:
-                self.db_channel = grpc.insecure_channel(db_addr)
-                stub = books_pb2_grpc.BooksDatabaseStub(self.db_channel)
-                self.logger.info(f"Connected to Books Database Primary at {db_addr}")
-                return stub
-            except Exception as e:
-                self.logger.error(f"FAILED to connect to Books Database at {db_addr}: {e}", exc_info=True)
-                return None
-        else:
+        if not db_addr:
             self.logger.warning("BOOKS_DB_PRIMARY_ADDR not set. DB functionality disabled.")
+            return None
+        try:
+            ch = grpc.insecure_channel(db_addr)
+            stub = books_pb2_grpc.BooksDatabaseStub(ch)
+            self.logger.info(f"Connected to Books Database Primary at {db_addr}")
+            return stub
+        except Exception as e:
+            self.logger.error(f"FAILED to connect to Books Database at {db_addr}: {e}", exc_info=True)
             return None
 
     # --- Leader Election & Heartbeat ---
@@ -141,48 +145,29 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         The leader is the peer with the lexicogrphically smallest ID
         among all peers considered 'alive' (heartbeat received within timeout).
         """
-        current_time = time.time()
-        alive = [
-            peer for peer, last_seen in self.peer_status.items()
-            if (current_time - last_seen) < HEARTBEAT_TIMEOUT_SEC
-        ]
-
+        now = time.time()
+        alive = [p for p, t in self.peer_status.items() if (now - t) < HEARTBEAT_TIMEOUT_SEC]
         if not alive:
             return False
-
-        alive.sort()  # Sort IDs lexicographically
-        elected_leader_id = alive[0]
-        is_current_leader = (self.executor_id == elected_leader_id)
-
-        return is_current_leader
+        alive.sort()
+        return alive[0] == self.executor_id
 
     def send_heartbeats_loop(self):
         """Periodically sends Ping requests to all peers."""
         self.logger.info("Heartbeat loop started.")
         while self.running:
             self.peer_status[self.executor_id] = time.time()
-
-            for peer_id, (host, port) in self.peer_addr_map.items():
-                if peer_id == self.executor_id:
-                    continue # Don't ping self over network
-
-                target = f"{host}:{port}"
+            for pid, (host, port) in self.peer_addr_map.items():
+                if pid == self.executor_id:
+                    continue
                 try:
-                    with grpc.insecure_channel(target) as channel:
-                        stub = order_executor_pb2_grpc.OrderExecutorServiceStub(channel)
-                        response = stub.Ping(order_executor_pb2.PingRequest(), timeout=GRPC_TIMEOUT_SEC)
-                        if response:
-                            self.peer_status[peer_id] = time.time()
-                            self.logger.info(f"[Heartbeat] Ping to {peer_id} successful.") # Log success
-                except grpc.RpcError as e:
-                    if e.code() in [grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED]:
-                        pass
-                    else:
-                        self.logger.error(f"[Heartbeat] Unexpected gRPC error pinging {peer_id}: {e.code()} - {e.details()}")
-                except Exception as e:
-                    # Log any other unexpected errors during ping
-                    self.logger.error(f"[Heartbeat] Unexpected Python error pinging {peer_id}: {e}", exc_info=True)
-
+                    addr = f"{host}:{port}"
+                    ch = grpc.insecure_channel(addr)
+                    stub = order_executor_pb2_grpc.OrderExecutorServiceStub(ch)
+                    stub.Ping(order_executor_pb2.PingRequest(), timeout=GRPC_TIMEOUT_SEC)
+                    self.peer_status[pid] = time.time()
+                except:
+                    pass
             time.sleep(HEARTBEAT_INTERVAL_SEC)
         self.logger.info("Heartbeat loop stopped.")
 
@@ -191,10 +176,10 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         """Periodically checks leader status and triggers execution loop if needed."""
         self.logger.info("Leader monitor loop started.")
         while self.running:
-            current_leader_status = self.determine_leader()
-            if current_leader_status != self.is_leader:
-                self.logger.info(f"Leadership status changed: {self.is_leader} -> {current_leader_status}")
-                self.is_leader = current_leader_status
+            new_leader = self.determine_leader()
+            if new_leader != self.is_leader:
+                self.logger.info(f"Leadership status changed: {self.is_leader} -> {new_leader}")
+                self.is_leader = new_leader
                 if self.is_leader:
                     self._start_leader_execution_loop()
 
@@ -203,30 +188,29 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         self.logger.info("Leader monitor loop stopped.")
 
     def _start_leader_execution_loop(self):
-         """Starts the leader execution loop thread if not already running."""
-         if not self.leader_thread or not self.leader_thread.is_alive():
-              self.logger.info("Starting leader execution loop.")
-              self.leader_thread = threading.Thread(target=self.leader_execution_loop, daemon=True)
-              self.leader_thread.start()
+        """Starts the leader execution loop thread if not already running."""
+        if not (self.leader_thread and self.leader_thread.is_alive()):
+            self.logger.info("Starting leader execution loop.")
+            self.leader_thread = threading.Thread(target=self.leader_execution_loop, daemon=True)
+            self.leader_thread.start()
 
 
     def leader_execution_loop(self):
-        """Continuously attempts to dequeue and executee orders while leader."""
+        """Continuously attempts to dequeue and execute orders while leader."""
         self.logger.info("Leader execution loop running.")
         while self.running and self.is_leader:
             # Call the main execution logic
             self.execute_next_order_internal()
             # Wait before polling again
             time.sleep(ORDER_QUEUE_POLL_INTERVAL_SEC)
-        self.logger.info("Leader execution loop stopped (no longer leader or shutting down).")
-
+        self.logger.info("Leader execution loop stopped.")
 
     # --- Order Execution ---
 
     def execute_next_order_internal(self):
         """Internal method called by the leader loop to process one order."""
-        if not self.order_queue_stub or not self.db_stub:
-            self.logger.error("[Execution] Cannot execute: OQ or DB stub missing.")
+        if not (self.order_queue_stub and self.db_stub and self.payment_stub):
+            self.logger.error("[Execution] Cannot execute: missing stub(s).")
             return
 
         try:
@@ -251,35 +235,67 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         self.logger.info(f"[Processing] Start processing order {order_id}...")
 
         try:
-            order_data = json.loads(order.details)
-            first_item = order_data['items'][0]
-            title = first_item.get('name')
-            quantity = first_item.get('quantity')
+            data = json.loads(order.details)
+            item = data['items'][0]
+            title = item.get('name')
+            quantity = item.get('quantity')
+            amount = quantity * 10.0  # custom price for the book
 
-            self.logger.info(f"[DB Interaction] Order {order_id}: Attempting to decrement stock for '{title}' by {quantity}.")
-            
-            decrement_request = books_pb2.DecrementStockRequest(
-                title=title, 
-                quantity_to_decrement=quantity
+            # Check and decrement stock
+            decr_resp = self.db_stub.DecrementStock(
+                books_pb2.DecrementStockRequest(title=title, quantity_to_decrement=quantity),
+                timeout=GRPC_TIMEOUT_SEC
             )
-            
-            decrement_response = self.db_stub.DecrementStock(
-                decrement_request, 
-                timeout=GRPC_TIMEOUT_SEC 
+            if not decr_resp.success:
+                self.logger.warning(f"[Execution Failed] Order {order_id}: Insufficient stock ({decr_resp.final_stock} < {quantity})")
+                return
+
+            # Use final stock as new stock for 2PC
+            new_stock = decr_resp.final_stock
+            self.logger.info(f"[Processing] Order {order_id}: Using new_stock={new_stock} after decrement")
+
+            # 2PC step 1 - Prepare
+            self.logger.info(f"[2PC][Prepare] order={order_id}")
+            pay_p = self.payment_stub.Prepare(
+                payment_pb2.PrepareRequest(order_id=order_id, amount=amount),
+                timeout=GRPC_TIMEOUT_SEC
+            )
+            db_p = self.db_stub.Prepare(
+                books_pb2.PrepareRequest(order_id=order_id, title=title, new_stock=new_stock),
+                timeout=GRPC_TIMEOUT_SEC
             )
 
-            if decrement_response.success:
-                self.logger.info(f"[Execution Success] Order {order_id}: Stock for '{title}' decremented. New stock: {decrement_response.final_stock}.")
+            if pay_p.ready and db_p.ready:
+                # 2PC step 2 - Commit
+                self.logger.info(f"[2PC][Commit] order={order_id}")
+                self.payment_stub.Commit(
+                    payment_pb2.CommitRequest(order_id=order_id),
+                    timeout=GRPC_TIMEOUT_SEC
+                )
+                self.db_stub.Commit(
+                    books_pb2.CommitRequest(order_id=order_id, title=title),
+                    timeout=GRPC_TIMEOUT_SEC
+                )
+                self.logger.info(f"[Execution Success] Order {order_id} committed.")
             else:
-                self.logger.warning(f"[Execution Failed] Order {order_id}: Failed to decrement stock for '{title}' (Insufficient stock?). Current stock: {decrement_response.final_stock}.")
+                # 2PC Step 3 - Abort
+                self.logger.warning(f"[2PC][Abort] order={order_id}")
+                self.payment_stub.Abort(
+                    payment_pb2.AbortRequest(order_id=order_id),
+                    timeout=GRPC_TIMEOUT_SEC
+                )
+                self.db_stub.Abort(
+                    books_pb2.AbortRequest(order_id=order_id),
+                    timeout=GRPC_TIMEOUT_SEC
+                )
+                self.logger.warning(f"[Execution Failed] Order {order_id} aborted.")
 
-        # --- Error Handling ---
         except json.JSONDecodeError as e:
-             self.logger.error(f"[Processing] Order {order_id}: Failed to parse JSON details: {e}")
+            self.logger.error(f"[Processing] Order {order_id}: Failed to parse JSON details: {e}")
         except grpc.RpcError as e:
-             self.logger.error(f"[DB Interaction] Order {order_id}: gRPC error during DecrementStock: {e.code()} - {e.details()}")
+            self.logger.error(f"[Processing] Order {order_id}: gRPC error: {e.code()} - {e.details()}")
         except Exception as e:
-             self.logger.error(f"[Processing] Order {order_id}: Unexpected error: {e}", exc_info=True)
+            self.logger.error(f"[Processing] Order {order_id}: Unexpected error: {e}", exc_info=True)
 
     # --- gRPC Service Methods ---
 
@@ -290,18 +306,17 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
         """
         self.logger.info(f"ExecuteNextOrder RPC called externally.")
         if self.is_leader:
-            self.logger.info("Is leader, attempting to execute one order now via internal method.")
-            result = self.execute_next_order_internal()
-            # The internal method doesn't return success/message easily here,
-            # so return a generic response or inspect state if needed.
+            self.logger.info("Is leader; triggering internal execution now.")
+            self.execute_next_order_internal()
             return order_executor_pb2.ExecuteOrderResponse(success=True, message="Triggered internal execution check.")
         else:
-            self.logger.info("Not leader, RPC call ignored.")
+            self.logger.info("Not leader; RPC ignored.")
             return order_executor_pb2.ExecuteOrderResponse(success=False, message="Not the leader.")
 
 
     def Ping(self, request, context):
         """gRPC method: Responds to pings from peers for heartbeating."""
+        self.logger.debug(f"Received Ping from {context.peer()}")
         return order_executor_pb2.PingResponse(message=f"{self.executor_id} alive")
 
 # --- Server ---

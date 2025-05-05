@@ -217,25 +217,22 @@ def checkout():
     sugg_clock = resp_sugg.clock
     suggestions_list = [{"title": s.title, "author": s.author} for s in resp_sugg.suggestions]
 
-    # Step 7: Check and decrement stock in the DB
+    # Step 7: Check stock only in the DB, kinda read-only
     try:
         with grpc.insecure_channel(BOOKS_DB_ADDR) as channel:
             db_stub = books_pb2_grpc.BooksDatabaseStub(channel)
             for item in checkout_data.get("items", []):
                 title = item.get("name")
-                qty = item.get("quantity", 0)
-                resp_db = db_stub.DecrementStock(
-                    books_pb2.DecrementStockRequest(
-                        title=title,
-                        quantity_to_decrement=qty
-                    ),
+                qty   = item.get("quantity", 0)
+                stock_resp = db_stub.Read(
+                    books_pb2.ReadRequest(title=title),
                     timeout=3
                 )
-                if not resp_db.success:
+                if stock_resp.stock < qty:
                     return jsonify({
                         "orderId": order_id,
                         "status": "Order Rejected",
-                        "message": f"Insufficient stock for '{title}'. Only {resp_db.final_stock} left.",
+                        "message": f"Insufficient stock for '{title}'. Only {stock_resp.stock} left.",
                         "suggestedBooks": []
                     }), 200
     except grpc.RpcError as e:
