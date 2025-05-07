@@ -1,12 +1,12 @@
 # Documentation
 
-### Vector Clock Diagram
+### Consistency Protocol
 
-![vector_clock_diagram](vector_clocks_diagram.png)
+![consistency_protocol](Consistency_protocol.png)
 
-### Leader Election Diagram
+### Distributed Commitment Protocol
 
-![leader_election_diagram](Leader_election_diagram.png)
+![distributed_commitment_protocol](Distributed_commitment.png)
 
 ### Frontend
 
@@ -36,5 +36,9 @@ A priority queue that stores incoming orders.
 
 Group of replicated instances responsible for processing orders from the queue and uses leader election to coordinate.
 
+## Books Database
+A replicated key-value store managing book stock. It uses a primary-backup model to stay consistent and participates in two-phase commit (2PC) to ensure stock updates happen only when an order is confirmed. Main tasks: read stock and prepare/commit/abort stock changes.
 
+## Payment
+Handles payment processing and also follows the 2PC protocol. It prepares, then commits or cancels a payment based on the order outcome to ensure payments go through only if the order is fully successful.
 
