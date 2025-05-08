@@ -316,7 +316,7 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
 
     def Ping(self, request, context):
         """gRPC method: Responds to pings from peers for heartbeating."""
-        self.logger.debug(f"Received Ping from {context.peer()}")
+        self.logger.info(f"Received Ping from {context.peer()}")
         return order_executor_pb2.PingResponse(message=f"{self.executor_id} alive")
 
 # --- Server ---
