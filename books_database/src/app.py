@@ -33,8 +33,8 @@ class BaseBooksDatabaseServicer(books_pb2_grpc.BooksDatabaseServicer):
         # Seed sample data
         self.store.update({
             'The Lord of the Rings': 10,
-            'Dune': 5,
-            '1984': 8,
+            'Dune': 10,
+            '1984': 14,
         })
         self.logger.info(f"[{self.replica_id}] Initialized store with the data: {self.store}")
 
@@ -43,8 +43,9 @@ class BaseBooksDatabaseServicer(books_pb2_grpc.BooksDatabaseServicer):
 
     def Read(self, request, context):
         # Handles Read RPC: fetch stock for a given title from local store.
-        stock = self.store.get(request.title, 0)
-        self.logger.info(f"[Read] '{request.title}' -> stock={stock}")
+        with self.store_lock:
+            stock = self.store.get(request.title, 0)
+            self.logger.info(f"[Read] '{request.title}' -> stock={stock}")
         return books_pb2.ReadResponse(stock=stock)
 
     def _local_write(self, title: str, new_stock: int) -> bool:
