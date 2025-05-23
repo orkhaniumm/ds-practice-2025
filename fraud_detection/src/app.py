@@ -6,6 +6,34 @@ import logging
 import requests
 from concurrent import futures
 
+# OpenTelemetry setup
+from opentelemetry import trace, metrics
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+resource = Resource(attributes={SERVICE_NAME: "fraud-detection"})
+trace.set_tracer_provider(TracerProvider(resource=resource))
+tracer = trace.get_tracer(__name__)
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint="http://observability:4318/v1/traces"))
+)
+
+metric_reader = PeriodicExportingMetricReader(
+    OTLPMetricExporter(endpoint="http://observability:4318/v1/metrics"),
+    export_interval_millis=5000 
+)
+metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[metric_reader]))
+meter = metrics.get_meter(__name__)
+
+fraud_counter = meter.create_counter("fraud_checks_total")
+fraud_gauge = meter.create_up_down_counter("active_fraud_requests")
+fraud_hist = meter.create_histogram("fraud_check_duration_ms")
+
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,51 +100,63 @@ class FraudDetectionService(fd_grpc.FraudDetectionServiceServicer):
         self.orders = {}
 
     def InitOrder(self, request, context):
-        # Initialize order by parsing checkout data and cache data
-        logger.info(f"[FraudDetection] InitOrder for {request.orderId}")
-        try:
-            data = json.loads(request.checkoutData)
-        except Exception as e:
-            logger.error(f"[FraudDetection] InitOrder parse error: {e}")
-            return fd_pb2.FraudInitResponse(success=False, clock="")
-         # Initialize the vector clock
-        init_clock = {"transaction": 0, "fraud": 0, "suggestions": 0}
-        self.orders[request.orderId] = {"data": data, "clock": init_clock}
-        return fd_pb2.FraudInitResponse(success=True, clock=json.dumps(init_clock))
+        with tracer.start_as_current_span("InitOrder"):
+            fraud_gauge.add(1)
+            logger.info(f"[FraudDetection] InitOrder for {request.orderId}")
+            try:
+                data = json.loads(request.checkoutData)
+            except Exception as e:
+                logger.error(f"[FraudDetection] InitOrder parse error: {e}")
+                fraud_gauge.add(-1)
+                return fd_pb2.FraudInitResponse(success=False, clock="")
+            init_clock = {"transaction": 0, "fraud": 0, "suggestions": 0}
+            self.orders[request.orderId] = {"data": data, "clock": init_clock}
+            fraud_gauge.add(-1)
+            return fd_pb2.FraudInitResponse(success=True, clock=json.dumps(init_clock))
 
     def CheckUserDataFraud(self, request, context):
-        # Check user data for fraud
-        logger.info(f"[FraudDetection] CheckUserDataFraud for {request.orderId}")
-        entry = self.orders.get(request.orderId)
-        if not entry:
-            return fd_pb2.FraudResponse(isFraud=True, message="Order not found", clock=request.clock)
-        local_clock = entry["clock"]
-        try:
-            # Parse the incoming clock
-            incoming_clock = json.loads(request.clock) if request.clock else local_clock
-        except:
-            incoming_clock = local_clock
-        # Update the clock for the fraud event.
-        merged_clock = update_clock(local_clock, "fraud")
-        entry["clock"] = merged_clock
-        logger.info("[FraudDetection] User data fraud check passed.")
-        return fd_pb2.FraudResponse(isFraud=False, message="User data not fraudulent", clock=json.dumps(merged_clock))
+        with tracer.start_as_current_span("CheckUserDataFraud"):
+            fraud_gauge.add(1)
+            start = metrics.get_meter(__name__).create_counter("fraud_start_time")  # Not recorded, just to show lifecycle
+            fraud_counter.add(1, {"type": "user_data"})
+            timer = trace.get_current_span()
+            logger.info(f"[FraudDetection] CheckUserDataFraud for {request.orderId}")
+            entry = self.orders.get(request.orderId)
+            if not entry:
+                fraud_gauge.add(-1)
+                return fd_pb2.FraudResponse(isFraud=True, message="Order not found", clock=request.clock)
+            local_clock = entry["clock"]
+            try:
+                incoming_clock = json.loads(request.clock) if request.clock else local_clock
+            except:
+                incoming_clock = local_clock
+            merged_clock = update_clock(local_clock, "fraud")
+            entry["clock"] = merged_clock
+            fraud_gauge.add(-1)
+            fraud_hist.record(10.0)  # Example latency
+            logger.info("[FraudDetection] User data fraud check passed.")
+            return fd_pb2.FraudResponse(isFraud=False, message="User data not fraudulent", clock=json.dumps(merged_clock))
 
     def CheckCreditCardFraud(self, request, context):
-        # Still dummy logic
-        logger.info(f"[FraudDetection] CheckCreditCardFraud for {request.orderId}")
-        entry = self.orders.get(request.orderId)
-        if not entry:
-            return fd_pb2.FraudResponse(isFraud=True, message="Order not found", clock=request.clock)
-        local_clock = entry["clock"]
-        try:
-            incoming_clock = json.loads(request.clock) if request.clock else local_clock
-        except:
-            incoming_clock = local_clock
-        merged_clock = update_clock(local_clock, "fraud")
-        entry["clock"] = merged_clock
-        logger.info("[FraudDetection] Credit card fraud check passed.")
-        return fd_pb2.FraudResponse(isFraud=False, message="Credit card not fraudulent", clock=json.dumps(merged_clock))
+        with tracer.start_as_current_span("CheckCreditCardFraud"):
+            fraud_gauge.add(1)
+            fraud_counter.add(1, {"type": "credit_card"})
+            logger.info(f"[FraudDetection] CheckCreditCardFraud for {request.orderId}")
+            entry = self.orders.get(request.orderId)
+            if not entry:
+                fraud_gauge.add(-1)
+                return fd_pb2.FraudResponse(isFraud=True, message="Order not found", clock=request.clock)
+            local_clock = entry["clock"]
+            try:
+                incoming_clock = json.loads(request.clock) if request.clock else local_clock
+            except:
+                incoming_clock = local_clock
+            merged_clock = update_clock(local_clock, "fraud")
+            entry["clock"] = merged_clock
+            fraud_gauge.add(-1)
+            fraud_hist.record(15.0)
+            logger.info("[FraudDetection] Credit card fraud check passed.")
+            return fd_pb2.FraudResponse(isFraud=False, message="Credit card not fraudulent", clock=json.dumps(merged_clock))
 
 def serve():
     # Create a gRPC server

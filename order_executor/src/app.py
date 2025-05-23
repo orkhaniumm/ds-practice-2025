@@ -300,10 +300,6 @@ class OrderExecutorServiceServicer(order_executor_pb2_grpc.OrderExecutorServiceS
     # --- gRPC Service Methods ---
 
     def ExecuteNextOrder(self, request, context):
-        """
-        gRPC method (potentially called externally, e.g., for testing).
-        Triggers the internal execution logic *if* this instance is the leader.
-        """
         self.logger.info(f"ExecuteNextOrder RPC called externally.")
         if self.is_leader:
             self.logger.info("Is leader; triggering internal execution now.")
