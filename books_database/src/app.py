@@ -32,9 +32,9 @@ class BaseBooksDatabaseServicer(books_pb2_grpc.BooksDatabaseServicer):
 
         # Seed sample data
         self.store.update({
-            'The Lord of the Rings': 10,
-            'Dune': 10,
-            '1984': 14,
+            'The Lord of the Rings': 100,
+            'Dune': 1000,
+            '1984': 140,
         })
         self.logger.info(f"[{self.replica_id}] Initialized store with the data: {self.store}")
 
